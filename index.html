@@ -732,6 +732,7 @@
       </div>
     </div>
     <div id="leads-cobertura-aviso" style="display:none;font-size:11px;color:#EF9F27;margin-bottom:8px;padding:6px 10px;background:rgba(239,159,39,0.08);border-radius:6px;">⚠ Este trimestre está parcial ou totalmente fora da janela de dados disponível (últimos 30 dias). Semanas mais antigas podem aparecer vazias mesmo tendo tido reuniões.</div>
+    <div id="leads-reunioes-resumo" style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap;"></div>
     <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:11px;min-width:500px;" id="leads-reunioes-table">
         <thead id="leads-reunioes-thead"></thead>
@@ -742,6 +743,7 @@
       <span style="font-size:11px;color:#91DBE4;">Leads = leads criados</span>
       <span style="font-size:11px;color:#5DCAA5;">Reun. = reuniões geradas</span>
       <span style="font-size:11px;color:#EF9F27;">Conv. = reuniões / leads da mesma semana</span>
+      <span style="font-size:11px;color:#657786;">% variação = Conv. desta semana vs. semana anterior</span>
     </div>
   </div>
 
@@ -2190,6 +2192,64 @@ function renderReunioesConsultor() {
   }
 }
 
+// Cards de tendência acima da tabela "Leads x reuniões x conversão":
+// respondem diretamente "a taxa de reuniões aumentou?" (volume) e
+// "a conversão em reuniões agendadas aumentou ou diminuiu?" (Reun./Leads, em pp).
+function renderLeadsReunioesResumo({ leadsCur, reunCur, foraJanelaCur, leadsPrev, reunPrev, foraJanelaPrev, temPrev, labelCur, labelPrev }) {
+  const el = document.getElementById('leads-reunioes-resumo');
+  if (!el) return;
+
+  function arrowHtml(delta, unidade) {
+    if (delta === null) return '<span style="color:#657786;font-size:12px;">—</span>';
+    const cor = delta > 0 ? '#3ddc84' : (delta < 0 ? '#ff6b6b' : '#657786');
+    const seta = delta > 0 ? '▲ +' : (delta < 0 ? '▼ ' : '▲ ');
+    return '<span style="color:' + cor + ';font-size:12px;font-weight:600;">' + seta + delta + unidade + '</span>';
+  }
+
+  function card(titulo, valorAtualTxt, delta, unidade, subtexto, indisponivel) {
+    return '<div style="flex:1;min-width:200px;background:rgba(255,255,255,0.03);border:0.5px solid rgba(255,255,255,0.08);border-radius:10px;padding:0.9rem 1.1rem;">'
+      + '<div style="color:#a8b3c7;font-size:11.5px;margin-bottom:5px;">' + titulo + '</div>'
+      + '<div style="display:flex;align-items:baseline;gap:9px;">'
+      + '<span style="color:#e8ecf5;font-size:22px;font-weight:600;">' + (indisponivel ? '—' : valorAtualTxt) + '</span>'
+      + (indisponivel ? '' : arrowHtml(delta, unidade))
+      + '</div>'
+      + '<div style="color:#657786;font-size:10.5px;margin-top:3px;">' + subtexto + '</div>'
+      + '</div>';
+  }
+
+  if (!temPrev) {
+    el.innerHTML = card('Taxa de reuniões (' + (labelCur||'') + ')', reunCur.toLocaleString('pt-BR'), null, '', 'Sem trimestre anterior para comparar', false)
+      + card('Conv. em reuniões agendadas (' + (labelCur||'') + ')', leadsCur > 0 ? Math.round((reunCur/leadsCur)*100) + '%' : '—', null, '', 'Sem trimestre anterior para comparar', false);
+    return;
+  }
+
+  const dadosIncompletos = foraJanelaCur || foraJanelaPrev;
+
+  // Card 1: volume de reuniões (contagem), trimestre atual vs. anterior
+  const deltaVolume = (!dadosIncompletos && reunPrev > 0) ? Math.round(((reunCur - reunPrev) / reunPrev) * 100) : null;
+  const card1 = card(
+    'Taxa de reuniões (' + labelCur + ')',
+    reunCur.toLocaleString('pt-BR'),
+    deltaVolume, '%',
+    dadosIncompletos ? 'Dados de tarefas cobrem só os últimos 30 dias — comparação pode estar incompleta' : ('vs. ' + reunPrev + ' no trimestre anterior (' + labelPrev + ')'),
+    false
+  );
+
+  // Card 2: taxa Reun./Leads (em pp), trimestre atual vs. anterior
+  const taxaCur = leadsCur > 0 ? (reunCur / leadsCur) * 100 : null;
+  const taxaPrev = leadsPrev > 0 ? (reunPrev / leadsPrev) * 100 : null;
+  const deltaPP = (!dadosIncompletos && taxaCur !== null && taxaPrev !== null) ? Math.round(taxaCur - taxaPrev) : null;
+  const card2 = card(
+    'Conv. em reuniões agendadas (' + labelCur + ')',
+    taxaCur !== null ? Math.round(taxaCur) + '%' : '—',
+    deltaPP, 'pp',
+    dadosIncompletos ? 'Dados de tarefas cobrem só os últimos 30 dias — comparação pode estar incompleta' : ('vs. ' + (taxaPrev !== null ? Math.round(taxaPrev) : '—') + '% no trimestre anterior (' + labelPrev + ')'),
+    false
+  );
+
+  el.innerHTML = card1 + card2;
+}
+
 function renderLeadsReunioesConversao() {
   const slotL = document.getElementById('localFunilSlot-leads');
   if (slotL && !slotL.dataset.built) { slotL.innerHTML = localFunilHTML('leads'); slotL.dataset.built = '1'; }
@@ -2255,7 +2315,34 @@ function renderLeadsReunioesConversao() {
     return passaConsultor(getOwnerTask(t));
   });
 
+  // Trimestre anterior (mesmos filtros) — usado só para os cards de tendência abaixo
+  const trimPrev = trims[selIdx + 1] || null;
+  let leadsTrimPrev = [], reunioesTrimPrev = [], foraDaJanelaPrev = true;
+  if (trimPrev) {
+    const { inicio: inicioP, fim: fimP } = trimPrev;
+    foraDaJanelaPrev = inicioP < limiteCacheL;
+    leadsTrimPrev = deals.filter(d => {
+      const ref = new Date(d.createdAt || 0);
+      if (!(ref >= inicioP && ref <= fimP)) return false;
+      if (!passaFunil(d.dealStage?.funnel?.name)) return false;
+      return passaConsultor(getOwnerDeal(d));
+    });
+    reunioesTrimPrev = reunioes.filter(t => {
+      const ref = new Date(t.dueDate || t.createdAt || 0);
+      if (!(ref >= inicioP && ref <= fimP)) return false;
+      const deal = t.deal && t.deal.id ? dealById[t.deal.id] : null;
+      if (!passaFunil(deal?.dealStage?.funnel?.name)) return false;
+      return passaConsultor(getOwnerTask(t));
+    });
+  }
+  renderLeadsReunioesResumo({
+    leadsCur: leadsTrim.length, reunCur: reunioesTrim.length, foraJanelaCur: foraDaJanelaL,
+    leadsPrev: leadsTrimPrev.length, reunPrev: reunioesTrimPrev.length, foraJanelaPrev: foraDaJanelaPrev,
+    temPrev: !!trimPrev, labelCur: trim.label, labelPrev: trimPrev?.label
+  });
+
   if (!leadsTrim.length && !reunioesTrim.length) {
+    document.getElementById('leads-reunioes-resumo').innerHTML = '';
     document.getElementById('leads-reunioes-thead').innerHTML = '';
     document.getElementById('leads-reunioes-tbody').innerHTML = '<tr><td class="empty" style="text-align:center;padding:1rem;">Nenhum lead ou reunião no trimestre/funis selecionados.</td></tr>';
     return;
@@ -2352,6 +2439,24 @@ function renderLeadsReunioesConversao() {
   const totalReunTexto = foraDaJanelaL ? '—' : totalReun;
   tbody += '<td style="text-align:right;padding:7px 8px;font-weight:700;color:white;' + bLeft + '">'
          + totalLeads + ' / ' + totalReunTexto + ' · ' + (convGeral === null ? '—' : convGeral + '%') + '</td></tr>';
+
+  // Linha de % variação: Conv. de cada semana comparada com a Conv. da semana anterior (mesmo padrão da "Evolução mensal")
+  const convsPorSemana = totais.map(t => t.leads > 0 ? (t.reun / t.leads) * 100 : null);
+  tbody += '<tr style="border-top:0.5px solid rgba(255,255,255,0.1);">'
+    + '<td style="padding:5px 8px;font-size:10px;color:rgba(255,255,255,0.4);">% variação (Conv.)</td>';
+  convsPorSemana.forEach((conv, i) => {
+    let cellHtml;
+    if (foraDaJanelaL || i === 0 || conv === null || convsPorSemana[i - 1] === null || convsPorSemana[i - 1] === 0) {
+      cellHtml = '<span style="color:#657786;">—</span>';
+    } else {
+      const delta = Math.round(((conv - convsPorSemana[i - 1]) / convsPorSemana[i - 1]) * 100);
+      const cor = delta > 0 ? '#3ddc84' : (delta < 0 ? '#ff6b6b' : '#657786');
+      const seta = delta > 0 ? '▲ +' : (delta < 0 ? '▼ ' : '▲ ');
+      cellHtml = '<span style="color:' + cor + ';font-weight:600;">' + seta + delta + '%</span>';
+    }
+    tbody += '<td colspan="3" style="text-align:center;padding:5px 4px;font-size:10px;' + bLeft + '">' + cellHtml + '</td>';
+  });
+  tbody += '<td style="' + bLeft + '"></td></tr>';
 
   document.getElementById('leads-reunioes-tbody').innerHTML = tbody;
 }
