@@ -311,6 +311,9 @@
       <option value="done">Concluídas</option>
       <option value="pending">Pendentes</option>
     </select>
+    <select id="atv-tipo" onchange="renderAtividades()" style="font-size:12px;padding:5px 8px;border-radius:8px;border:0.5px solid rgba(255,255,255,0.15);background:#1a2540;color:white;font-family:'Poppins',sans-serif;">
+      <option value="all">Todos os tipos</option>
+    </select>
     <input type="text" id="atv-search" placeholder="Buscar atividade..." oninput="renderAtividades()" style="padding:5px 10px;border-radius:8px;border:0.5px solid rgba(255,255,255,0.15);font-size:12px;font-family:'Poppins',sans-serif;background:rgba(255,255,255,0.08);color:white;width:160px;">
     <button onclick="fetchTasks(true)" id="atv-refresh-btn" style="background:rgba(255,255,255,0.07);color:white;border:0.5px solid rgba(255,255,255,0.15);font-size:12px;padding:6px 14px;border-radius:8px;display:inline-flex;align-items:center;gap:6px;">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
@@ -1853,13 +1856,15 @@ async function fetchTasks(forceRefresh) {
   const btn = document.getElementById('atv-refresh-btn');
   if (btn) { btn.innerHTML = '<span class="spinner" style="border-top-color:#0C7488;border-color:rgba(14,20,40,0.2);"></span> Buscando...'; btn.disabled = true; }
   try {
-    const resp = await fetch(PROXY + '/tasks');
+    // Fonte: SharePoint (histórico completo), não mais /tasks (limitado a 30 dias no Agendor)
+    const resp = await fetch(PROXY + '/atividades-historico');
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const result = await resp.json();
+    if (result.erro) console.warn('Aviso ao buscar histórico do SharePoint:', result.erro);
     atvTasksCache = result.data || [];
     baseTasks = atvTasksCache;
   } catch(e) {
-    console.warn('Erro ao buscar tasks:', e.message);
+    console.warn('Erro ao buscar histórico de atividades:', e.message);
     if (!atvTasksCache) atvTasksCache = [];
   }
   if (btn) { btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg> Recarregar'; btn.disabled = false; }
@@ -2066,7 +2071,7 @@ function renderReunioesConsultor() {
   const slotR = document.getElementById('localFunilSlot-reunioes');
   if (slotR && !slotR.dataset.built) { slotR.innerHTML = localFunilHTML('reunioes'); slotR.dataset.built = '1'; }
   const slotCR = document.getElementById('localConsultorSlot-reunioes');
-  if (slotCR && !slotCR.dataset.built) { slotCR.innerHTML = localConsultorHTML('reunioes'); slotCR.dataset.built = '1'; }
+  if (slotCR && !slotCR.dataset.built) { slotCR.innerHTML = localConsultorHTML('reunioes'); if (localConsultorState.reunioes.size > 0) slotCR.dataset.built = '1'; }
 
   const dealByIdR = {};
   (baseDeals || []).forEach(d => { dealByIdR[d.id] = d; });
@@ -2254,7 +2259,7 @@ function renderLeadsReunioesConversao() {
   const slotL = document.getElementById('localFunilSlot-leads');
   if (slotL && !slotL.dataset.built) { slotL.innerHTML = localFunilHTML('leads'); slotL.dataset.built = '1'; }
   const slotCL = document.getElementById('localConsultorSlot-leads');
-  if (slotCL && !slotCL.dataset.built) { slotCL.innerHTML = localConsultorHTML('leads'); slotCL.dataset.built = '1'; }
+  if (slotCL && !slotCL.dataset.built) { slotCL.innerHTML = localConsultorHTML('leads'); if (localConsultorState.leads.size > 0) slotCL.dataset.built = '1'; }
 
   const tasks = atvTasksCache || baseTasks || [];
   const reunioes = tasks.filter(t => t.type === 'Reunião');
@@ -2596,6 +2601,13 @@ function renderAtividades() {
   const curOwner = ownerSel.value;
   ownerSel.innerHTML = '<option value="all">Todos responsáveis</option>' + owners.map(o => `<option value="${o}" ${o===curOwner?'selected':''}>${o}</option>`).join('');
 
+  // Popula select de tipos de atividade (Reunião, WhatsApp, Email, Tarefa, Ligação, Proposta...)
+  const tipos = [...new Set(tasks.map(t => t.type).filter(Boolean))].sort();
+  const tipoSel = document.getElementById('atv-tipo');
+  const curTipo = tipoSel.value;
+  tipoSel.innerHTML = '<option value="all">Todos os tipos</option>' + tipos.map(t => `<option value="${t}" ${t===curTipo?'selected':''}>${t}</option>`).join('');
+  const tipoFilter = tipoSel.value;
+
   // Filtra por período (usa dueDate ou createdAt)
   let filtered = tasks.filter(t => {
     const ref = t.dueDate || t.createdAt || t.updatedAt;
@@ -2610,6 +2622,7 @@ function renderAtividades() {
   if (ownerFilter !== 'all') filtered = filtered.filter(t => getTaskOwner(t) === ownerFilter);
   if (statusFilter === 'done') filtered = filtered.filter(t => isDone(t));
   if (statusFilter === 'pending') filtered = filtered.filter(t => !isDone(t));
+  if (tipoFilter !== 'all') filtered = filtered.filter(t => t.type === tipoFilter);
   if (search) filtered = filtered.filter(t => (t.text || '').toLowerCase().includes(search));
 
   const total = filtered.length;
