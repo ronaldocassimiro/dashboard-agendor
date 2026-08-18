@@ -775,6 +775,25 @@
     </div>
   </div>
 
+  <!-- Volume de reuniões (mês a mês / trimestre a trimestre) -->
+  <div class="card" style="margin-bottom:1.5rem;">
+    <div class="card-header">
+      <span class="card-title">Volume de reuniões</span>
+      <div style="display:flex;gap:6px;">
+        <button id="volume-reunioes-btn-mes" onclick="setVolumeReunioesView('mes')" style="font-size:12px;padding:5px 12px;border-radius:8px;border:1px solid #0C7488;background:#0C7488;color:#e8ecf5;cursor:pointer;">Mês a mês</button>
+        <button id="volume-reunioes-btn-trim" onclick="setVolumeReunioesView('trim')" style="font-size:12px;padding:5px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:#a8b3c7;cursor:pointer;">Trimestre a trimestre</button>
+      </div>
+    </div>
+    <div style="position:relative;width:100%;height:320px;">
+      <canvas id="chartVolumeReunioes" role="img" aria-label="Gráfico de barras empilhadas de reuniões realizadas e pendentes, com percentual de realização, média por dia e negócios ganhos"></canvas>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:11px;">
+      <span style="color:#5DCAA5;">Realizadas</span>
+      <span style="color:#EF9F27;">Pendentes</span>
+      <span style="color:rgba(255,255,255,0.4);">(altura total = agendadas · % realização, méd/dia e ganhos no eixo)</span>
+    </div>
+  </div>
+
   <!-- Reuniões por canal de origem -->
   <div class="card" style="margin-bottom:1.5rem;">
     <div class="card-header">
@@ -791,6 +810,9 @@
       <span style="font-size:11px;color:#91DBE4;">Ag. = agendadas (todas)</span>
       <span style="font-size:11px;color:#5DCAA5;">Real. = realizadas (concluídas)</span>
       <span style="font-size:11px;color:#EF9F27;">Pend. = pendentes</span>
+      <span style="font-size:11px;color:#91DBE4;">Ag. consultor = agendadas manualmente</span>
+      <span style="font-size:11px;color:#B79CED;">Ag. Luca = agendadas pelo bot</span>
+      <span style="font-size:11px;color:#5DCAA5;">Ganhos = negócios ganhos com origem nesse canal</span>
       <span id="reunioes-canal-luca-resumo" style="font-size:11px;color:#B79CED;"></span>
     </div>
   </div>
@@ -1121,7 +1143,7 @@ function switchTab(id, btn) {
 
   if (id === 'contratos') fetchProductsForDeals(baseDeals).then(() => renderContratos());
   if (id === 'analise') initFunilEtapas();
-  if (id === 'atividades') { renderAtividades(); renderReunioesConsultor(); renderLeadsReunioesConversao(); renderReunioesCanal(); }
+  if (id === 'atividades') { renderAtividades(); renderReunioesConsultor(); renderLeadsReunioesConversao(); renderVolumeReunioes(); renderReunioesCanal(); }
   if (id === 'contratos-autentique') fetchAutentique();
 }
 
@@ -1871,6 +1893,7 @@ async function fetchTasks(forceRefresh) {
   renderAtividades();
   renderReunioesConsultor();
   renderLeadsReunioesConversao();
+  renderVolumeReunioes();
   renderReunioesCanal();
 }
 
@@ -2466,6 +2489,136 @@ function renderLeadsReunioesConversao() {
   document.getElementById('leads-reunioes-tbody').innerHTML = tbody;
 }
 
+let volumeReunioesChart = null;
+let volumeReunioesViewState = 'mes';
+
+function setVolumeReunioesView(view) {
+  volumeReunioesViewState = view;
+  const btnMes = document.getElementById('volume-reunioes-btn-mes');
+  const btnTrim = document.getElementById('volume-reunioes-btn-trim');
+  if (btnMes) {
+    btnMes.style.background = view === 'mes' ? '#0C7488' : 'transparent';
+    btnMes.style.color = view === 'mes' ? '#e8ecf5' : '#a8b3c7';
+    btnMes.style.borderColor = view === 'mes' ? '#0C7488' : 'rgba(255,255,255,0.15)';
+  }
+  if (btnTrim) {
+    btnTrim.style.background = view === 'trim' ? '#0C7488' : 'transparent';
+    btnTrim.style.color = view === 'trim' ? '#e8ecf5' : '#a8b3c7';
+    btnTrim.style.borderColor = view === 'trim' ? '#0C7488' : 'rgba(255,255,255,0.15)';
+  }
+  renderVolumeReunioes();
+}
+
+function renderVolumeReunioes() {
+  const canvas = document.getElementById('chartVolumeReunioes');
+  if (!canvas || typeof Chart === 'undefined') return;
+  const tasks = atvTasksCache || baseTasks || [];
+  const reunioes = tasks.filter(t => t.type === 'Reunião');
+  const dealById = {};
+  (baseDeals || []).forEach(d => { dealById[d.id] = d; });
+  const isDone = t => !!(t.finishedAt);
+  const isGanho = d => d && d.dealStatus?.id === 2;
+  const now = new Date();
+  const ano = now.getFullYear();
+
+  const labels = [], realizadas = [], pendentes = [], ganhos = [], diasPeriodo = [];
+
+  function processaPeriodo(inicio, fim, rotulo) {
+    const futuro = inicio > now;
+    if (futuro) {
+      labels.push(rotulo);
+      realizadas.push(null); pendentes.push(null); ganhos.push(null); diasPeriodo.push(null);
+      return;
+    }
+    const parcial = fim > now;
+    labels.push(rotulo + (parcial ? '*' : ''));
+    const noPeriodo = reunioes.filter(t => {
+      const ref = new Date(t.dueDate || t.createdAt || 0);
+      return ref >= inicio && ref <= fim;
+    });
+    const real = noPeriodo.filter(isDone).length;
+    pendentes.push(noPeriodo.length - real);
+    realizadas.push(real);
+    const dealsGanhosComReuniao = new Set();
+    noPeriodo.forEach(t => {
+      const deal = t.deal && t.deal.id ? dealById[t.deal.id] : null;
+      if (isGanho(deal)) dealsGanhosComReuniao.add(deal.id);
+    });
+    ganhos.push(dealsGanhosComReuniao.size);
+    const fimEfetivo = parcial ? now : fim;
+    diasPeriodo.push(Math.max(1, Math.round((fimEfetivo - inicio) / (1000 * 60 * 60 * 24)) + 1));
+  }
+
+  if (volumeReunioesViewState === 'mes') {
+    const nomesMes = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    for (let m = 0; m < 12; m++) {
+      const inicio = new Date(Date.UTC(ano, m, 1));
+      const fim = new Date(Date.UTC(ano, m + 1, 0, 23, 59, 59));
+      processaPeriodo(inicio, fim, nomesMes[m]);
+    }
+  } else {
+    for (let q = 0; q < 4; q++) {
+      const mesInicio = q * 3;
+      const inicio = new Date(Date.UTC(ano, mesInicio, 1));
+      const fim = new Date(Date.UTC(ano, mesInicio + 3, 0, 23, 59, 59));
+      processaPeriodo(inicio, fim, 'Q' + (q + 1) + '/' + ano);
+    }
+  }
+
+  const totais = realizadas.map((r, i) => r === null ? null : r + pendentes[i]);
+  const tickLines = labels.map((lbl, i) => {
+    if (totais[i] === null) return [lbl];
+    const pct = totais[i] > 0 ? Math.round((realizadas[i] / totais[i]) * 100) : 0;
+    const porDia = diasPeriodo[i] > 0 ? (totais[i] / diasPeriodo[i]).toFixed(1) : '0.0';
+    return [lbl, pct + '% real.', porDia + '/dia', (ganhos[i] || 0) + ' ganhos'];
+  });
+
+  if (volumeReunioesChart) { volumeReunioesChart.destroy(); volumeReunioesChart = null; }
+  volumeReunioesChart = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Realizadas', data: realizadas, backgroundColor: '#5DCAA5', stack: 's', borderRadius: { topLeft: 0, topRight: 0, bottomLeft: 4, bottomRight: 4 }, maxBarThickness: 28 },
+        { label: 'Pendentes', data: pendentes, backgroundColor: '#EF9F27', stack: 's', borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 }, maxBarThickness: 28 }
+      ]
+    },
+    plugins: [{
+      id: 'totalNoTopoVolumeReunioes',
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        const meta = chart.getDatasetMeta(1);
+        meta.data.forEach((bar, i) => {
+          if (totais[i] === null) return;
+          ctx.save();
+          ctx.fillStyle = '#e8ecf5';
+          ctx.font = "500 11px 'Poppins', sans-serif";
+          ctx.textAlign = 'center';
+          ctx.fillText(totais[i], bar.x, bar.y - 6);
+          ctx.restore();
+        });
+      }
+    }],
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      layout: { padding: { top: 20 } },
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          stacked: true, grid: { display: false },
+          ticks: {
+            autoSkip: false, maxRotation: 0,
+            color: ['#a8b3c7', '#91DBE4', '#657786', '#5DCAA5'],
+            font: { size: 10.5 },
+            callback: (val, idx) => tickLines[idx]
+          }
+        },
+        y: { stacked: true, ticks: { color: '#a8b3c7' }, grid: { color: 'rgba(255,255,255,0.06)' }, beginAtZero: true }
+      }
+    }
+  });
+}
+
 function renderReunioesCanal() {
   const mthead = document.getElementById('reunioes-canal-thead');
   const mtbody = document.getElementById('reunioes-canal-tbody');
@@ -2499,14 +2652,18 @@ function renderReunioesCanal() {
   const dealById = {};
   (baseDeals || []).forEach(d => { dealById[d.id] = d; });
   const isDone = t => !!(t.finishedAt);
+  const isLuca = t => ((t.text || t.title || '')).includes('[Luca]');
+  const isGanho = d => d && d.dealStatus?.id === 2;
 
   const map = {};
   noMes.forEach(t => {
     const deal = t.deal && t.deal.id ? dealById[t.deal.id] : null;
     const canal = (deal && deal.customFields?.origem_do_negocio?.value) || 'Sem origem definida';
-    if (!map[canal]) map[canal] = { ag: 0, real: 0 };
+    if (!map[canal]) map[canal] = { ag: 0, real: 0, luca: 0, ganhos: 0 };
     map[canal].ag++;
     if (isDone(t)) map[canal].real++;
+    if (isLuca(t)) map[canal].luca++;
+    if (isGanho(deal)) map[canal].ganhos++;
   });
 
   const totalAg = noMes.length;
@@ -2520,13 +2677,19 @@ function renderReunioesCanal() {
     + '<th style="text-align:center;padding:7px 8px;color:#91DBE4;font-weight:500;' + bL + '">Ag.</th>'
     + '<th style="text-align:center;padding:7px 8px;color:#5DCAA5;font-weight:500;">Real.</th>'
     + '<th style="text-align:center;padding:7px 8px;color:#EF9F27;font-weight:500;">Pend.</th>'
+    + '<th style="text-align:center;padding:7px 8px;color:#91DBE4;font-weight:500;' + bL + '">Ag. consultor</th>'
+    + '<th style="text-align:center;padding:7px 8px;color:#B79CED;font-weight:500;">Ag. Luca</th>'
+    + '<th style="text-align:center;padding:7px 8px;color:#5DCAA5;font-weight:500;' + bL + '">Ganhos</th>'
+    + '<th style="text-align:center;padding:7px 8px;color:rgba(255,255,255,0.4);font-weight:500;">%</th>'
     + '<th style="text-align:center;padding:7px 8px;color:rgba(255,255,255,0.5);font-weight:500;' + bL + '">Taxa realização</th>'
     + '<th style="text-align:left;padding:7px 8px;color:rgba(255,255,255,0.4);font-weight:500;min-width:130px;">Participação</th></tr>';
 
   let html = '';
   sorted.forEach(([canal, v]) => {
     const pend = v.ag - v.real;
+    const consultor = v.ag - v.luca;
     const taxa = v.ag > 0 ? Math.round((v.real / v.ag) * 100) : 0;
+    const pctGanhos = v.ag > 0 ? Math.round((v.ganhos / v.ag) * 100) : 0;
     const part = totalAg > 0 ? Math.round((v.ag / totalAg) * 100) : 0;
     const semOrigem = canal === 'Sem origem definida';
     html += '<tr style="border-top:0.5px solid rgba(255,255,255,0.08);">'
@@ -2534,17 +2697,29 @@ function renderReunioesCanal() {
       + '<td style="text-align:center;padding:8px;color:#91DBE4;' + bL + '">' + v.ag + '</td>'
       + '<td style="text-align:center;padding:8px;color:' + (v.real ? '#5DCAA5' : 'rgba(255,255,255,0.25)') + ';">' + (v.real || '—') + '</td>'
       + '<td style="text-align:center;padding:8px;color:' + (pend ? '#EF9F27' : 'rgba(255,255,255,0.25)') + ';">' + (pend || '—') + '</td>'
+      + '<td style="text-align:center;padding:8px;color:' + (consultor ? '#91DBE4' : 'rgba(255,255,255,0.25)') + ';' + bL + '">' + (consultor || '—') + '</td>'
+      + '<td style="text-align:center;padding:8px;color:' + (v.luca ? '#B79CED' : 'rgba(255,255,255,0.25)') + ';">' + (v.luca || '—') + '</td>'
+      + '<td style="text-align:center;padding:8px;color:' + (v.ganhos ? '#5DCAA5' : 'rgba(255,255,255,0.25)') + ';' + bL + '">' + (v.ganhos || '—') + '</td>'
+      + '<td style="text-align:center;padding:8px;color:rgba(255,255,255,0.5);font-size:11px;">' + pctGanhos + '%</td>'
       + '<td style="text-align:center;padding:8px;color:' + corTaxa(taxa) + ';font-weight:500;' + bL + '">' + taxa + '%</td>'
       + '<td style="padding:8px;"><div style="display:flex;align-items:center;gap:8px;"><div style="flex:1;height:6px;background:rgba(255,255,255,0.06);border-radius:3px;"><div style="width:' + part + '%;height:6px;background:#91DBE4;border-radius:3px;"></div></div><span style="color:rgba(255,255,255,0.5);font-size:10px;">' + part + '%</span></div></td></tr>';
   });
 
   const totalPend = totalAg - totalReal;
+  const totalLuca = noMes.filter(isLuca).length;
+  const totalConsultor = totalAg - totalLuca;
+  const totalGanhos = noMes.filter(t => isGanho(t.deal && t.deal.id ? dealById[t.deal.id] : null)).length;
+  const totalPctGanhos = totalAg > 0 ? Math.round((totalGanhos / totalAg) * 100) : 0;
   const totalTaxa = totalAg > 0 ? Math.round((totalReal / totalAg) * 100) : 0;
   html += '<tr style="background:rgba(255,255,255,0.04);border-top:0.5px solid rgba(255,255,255,0.15);">'
     + '<td style="padding:8px;color:#fff;font-weight:600;">Total</td>'
     + '<td style="text-align:center;padding:8px;color:#91DBE4;font-weight:600;' + bL + '">' + totalAg + '</td>'
     + '<td style="text-align:center;padding:8px;color:#5DCAA5;font-weight:600;">' + totalReal + '</td>'
     + '<td style="text-align:center;padding:8px;color:#EF9F27;font-weight:600;">' + totalPend + '</td>'
+    + '<td style="text-align:center;padding:8px;color:#91DBE4;font-weight:600;' + bL + '">' + totalConsultor + '</td>'
+    + '<td style="text-align:center;padding:8px;color:#B79CED;font-weight:600;">' + totalLuca + '</td>'
+    + '<td style="text-align:center;padding:8px;color:#5DCAA5;font-weight:600;' + bL + '">' + totalGanhos + '</td>'
+    + '<td style="text-align:center;padding:8px;color:rgba(255,255,255,0.6);font-weight:600;font-size:11px;">' + totalPctGanhos + '%</td>'
     + '<td style="text-align:center;padding:8px;color:' + corTaxa(totalTaxa) + ';font-weight:600;' + bL + '">' + totalTaxa + '%</td>'
     + '<td style="padding:8px;color:rgba(255,255,255,0.5);font-size:10px;">100%</td></tr>';
 
