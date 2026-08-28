@@ -785,13 +785,12 @@
       </div>
     </div>
     <div style="position:relative;width:100%;height:320px;">
-      <canvas id="chartVolumeReunioes" role="img" aria-label="Gráfico de barras de reuniões agendadas, realizadas e pendentes, com percentual de realização, média por dia e negócios ganhos"></canvas>
+      <canvas id="chartVolumeReunioes" role="img" aria-label="Gráfico de barras empilhadas de reuniões realizadas e pendentes, com percentual de realização, média por dia e negócios ganhos"></canvas>
     </div>
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:11px;">
-      <span style="color:#378ADD;">Agendadas</span>
       <span style="color:#5DCAA5;">Realizadas</span>
       <span style="color:#EF9F27;">Pendentes</span>
-      <span style="color:rgba(255,255,255,0.4);">(% realização, méd/dia e ganhos no eixo)</span>
+      <span style="color:rgba(255,255,255,0.4);">(altura total = agendadas · % realização, méd/dia e ganhos no eixo)</span>
     </div>
   </div>
 
@@ -2580,18 +2579,33 @@ function renderVolumeReunioes() {
     data: {
       labels,
       datasets: [
-        { label: 'Agendadas', data: agendadas, backgroundColor: '#378ADD', borderRadius: 4, maxBarThickness: 16 },
-        { label: 'Realizadas', data: realizadas, backgroundColor: '#5DCAA5', borderRadius: 4, maxBarThickness: 16 },
-        { label: 'Pendentes', data: pendentes, backgroundColor: '#EF9F27', borderRadius: 4, maxBarThickness: 16 }
+        { label: 'Realizadas', data: realizadas, backgroundColor: '#5DCAA5', stack: 's', borderRadius: { topLeft: 0, topRight: 0, bottomLeft: 4, bottomRight: 4 }, maxBarThickness: 28 },
+        { label: 'Pendentes', data: pendentes, backgroundColor: '#EF9F27', stack: 's', borderRadius: { topLeft: 4, topRight: 4, bottomLeft: 0, bottomRight: 0 }, maxBarThickness: 28 }
       ]
     },
+    plugins: [{
+      id: 'totalNoTopoVolumeReunioes',
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        const meta = chart.getDatasetMeta(1);
+        meta.data.forEach((bar, i) => {
+          if (agendadas[i] === null) return;
+          ctx.save();
+          ctx.fillStyle = '#e8ecf5';
+          ctx.font = "500 11px 'Poppins', sans-serif";
+          ctx.textAlign = 'center';
+          ctx.fillText(agendadas[i], bar.x, bar.y - 6);
+          ctx.restore();
+        });
+      }
+    }],
     options: {
       responsive: true, maintainAspectRatio: false,
-      layout: { padding: { top: 10 } },
+      layout: { padding: { top: 20 } },
       plugins: { legend: { display: false } },
       scales: {
         x: {
-          grid: { display: false },
+          stacked: true, grid: { display: false },
           ticks: {
             autoSkip: false, maxRotation: 0,
             color: ['#a8b3c7', '#91DBE4', '#657786', '#5DCAA5'],
@@ -2599,7 +2613,7 @@ function renderVolumeReunioes() {
             callback: (val, idx) => tickLines[idx]
           }
         },
-        y: { ticks: { color: '#a8b3c7' }, grid: { color: 'rgba(255,255,255,0.06)' }, beginAtZero: true }
+        y: { stacked: true, ticks: { color: '#a8b3c7' }, grid: { color: 'rgba(255,255,255,0.06)' }, beginAtZero: true }
       }
     }
   });
