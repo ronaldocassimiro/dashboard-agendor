@@ -3403,7 +3403,7 @@ function renderComissoes() {
   deals.forEach(d=>{
     const condicao=getCondicao(d),owner=d.owner?.name||'—',ownerDisplay=getOwnerDisplay(d);
     const origem=d.customFields?.origem_do_negocio?.value||'';
-    const isDiretoria=origem.toLowerCase().includes('relacionamento diretoria');
+    const isDiretoria=origem.trim().toLowerCase()==='relacionamento diretoria';
     const isRegraOrigem=isRegraOrigemDeal(owner,d),isFabiola=owner==='Fabíola Carvalho';
     let taxa;
     if(isDiretoria) taxa=null;
@@ -3440,7 +3440,7 @@ function renderComissoes() {
   const rows=[...dealsDetail].sort((a,b)=>new Date(getWonDate(b)||0)-new Date(getWonDate(a)||0)).map(d=>{
     const condicao=getCondicao(d),owner=d.owner?.name||'—',ownerDisplay=getOwnerDisplay(d),produto=getProdutoNome(d);
     const origem=d.customFields?.origem_do_negocio?.value||'';
-    const isDiretoria=origem.toLowerCase().includes('relacionamento diretoria');
+    const isDiretoria=origem.trim().toLowerCase()==='relacionamento diretoria';
     const isRegraOrigem=isRegraOrigemDeal(owner,d),isFabiola=owner==='Fabíola Carvalho';
     let taxa;
     if(isDiretoria) taxa=null;
