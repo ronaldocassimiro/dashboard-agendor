@@ -947,6 +947,9 @@
     <select id="com-owner" onchange="renderComissoes()" style="font-size:12px;padding:5px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:#0E1428;color:#e0e0e0;font-family:'Poppins',sans-serif;">
       <option value="all">Todos responsáveis</option>
     </select>
+    <select id="com-funil" onchange="renderComissoes()" style="font-size:12px;padding:5px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:#0E1428;color:#e0e0e0;font-family:'Poppins',sans-serif;">
+      <option value="all">Todos os funis</option>
+    </select>
     <button onclick="exportarExcelComissoes()" style="background:#1e7e4a;color:white;font-size:12px;padding:6px 14px;display:inline-flex;align-items:center;gap:6px;">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Exportar Excel
@@ -3378,6 +3381,12 @@ function renderComissoes() {
   const sel=document.getElementById('com-owner');
   const curVal=sel.value;
   sel.innerHTML='<option value="all">Todos responsáveis</option>'+owners.map(o=>`<option value="${o}" ${o===curVal?'selected':''}>${o}</option>`).join('');
+
+  const funilSel=document.getElementById('com-funil');
+  const curFunil=funilSel.value;
+  funilSel.innerHTML='<option value="all">Todos os funis</option>'+FUNIS_LISTA.map(f=>`<option value="${f.nome}" ${f.nome===curFunil?'selected':''}>${f.nome}</option>`).join('');
+  const funilFiltro=funilSel.value;
+
   let deals=baseDeals.filter(d=>{
     if(d.dealStatus?.id!==2) return false;
     const wonAt=getWonDate(d)?new Date(getWonDate(d)):null;
@@ -3385,6 +3394,7 @@ function renderComissoes() {
     if(from&&wonAt&&wonAt<from) return false;
     if(to&&wonAt&&wonAt>to) return false;
     if(ownerSel!=='all'&&d.owner?.name!==ownerSel) return false;
+    if(funilFiltro!=='all'&&d.dealStage?.funnel?.name!==funilFiltro) return false;
     if(search){const title=(d.title||d.person?.name||'').toLowerCase();if(!title.includes(search)) return false;}
     return true;
   });
