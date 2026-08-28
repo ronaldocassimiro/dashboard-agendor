@@ -3341,7 +3341,9 @@ function isRegraOrigemDeal(owner, d) {
 }
 function getComissaoEspecial(d) {
   const origem = d.customFields?.origem_do_negocio?.value || '';
-  if (origem.toLowerCase().includes('relacionamento diretoria')) return null;
+  const produto = getProdutoNome(d);
+  if (produto === 'Legalização') return null;
+  if (origem.trim().toLowerCase() === 'relacionamento diretoria') return null;
   if (origem.toLowerCase().includes('indique um amigo (colaborador)')) return 0.80;
   return 0.15;
 }
