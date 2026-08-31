@@ -848,7 +848,21 @@
   <div class="card" style="margin-bottom:1.5rem;">
     <div class="card-header" style="flex-wrap:wrap;gap:8px;">
       <span class="card-title">Lista de atividades</span>
-      <div style="display:flex;gap:8px;align-items:center;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <select id="lista-status" onchange="renderAtividades()" style="font-size:12px;padding:5px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:#0E1428;color:#e0e0e0;font-family:'Poppins',sans-serif;">
+          <option value="all">Todos os status</option>
+          <option value="done">Concluídas</option>
+          <option value="pending">Pendentes</option>
+          <option value="overdue">Atrasadas</option>
+        </select>
+        <select id="lista-owner" onchange="renderAtividades()" style="font-size:12px;padding:5px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:#0E1428;color:#e0e0e0;font-family:'Poppins',sans-serif;">
+          <option value="all">Todos responsáveis</option>
+        </select>
+        <button class="period-btn active" id="lista-btn-atual" onclick="setListaCiclo(0,this)" style="font-size:12px;">Mês atual</button>
+        <button class="period-btn" id="lista-btn-anterior" onclick="setListaCiclo(-1,this)" style="font-size:12px;">Mês anterior</button>
+        <input type="date" id="lista-dateFrom" onchange="clearListaBtns();renderAtividades()" style="padding:5px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:#0E1428;color:#e0e0e0;font-size:12px;font-family:'Poppins',sans-serif;color-scheme:dark;">
+        <span style="color:rgba(255,255,255,0.4);">→</span>
+        <input type="date" id="lista-dateTo" onchange="clearListaBtns();renderAtividades()" style="padding:5px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:#0E1428;color:#e0e0e0;font-size:12px;font-family:'Poppins',sans-serif;color-scheme:dark;">
         <span id="localTipoAtvSlot-lista"></span>
         <span id="atv-count-label" style="font-size:12px;color:rgba(255,255,255,0.4);white-space:nowrap;"></span>
       </div>
@@ -2995,10 +3009,34 @@ function renderAtividades() {
   document.getElementById('atv-owner-tipos').innerHTML = rowsTipos || EMPTY_ROW_TIPOS;
   document.getElementById('atv-owner-status').innerHTML = rowsStatus || EMPTY_ROW_STATUS;
 
-  // Lista de atividades — filtro de tipo próprio (multi-select), independente do "Todos os tipos" que afeta os cards do topo
+  // Lista de atividades — totalmente independente do filtro global (status, responsável, data e tipo próprios)
   const slotTipoLista = document.getElementById('localTipoAtvSlot-lista');
   if (slotTipoLista && !slotTipoLista.dataset.built) { slotTipoLista.innerHTML = localTipoAtvHTML('lista'); slotTipoLista.dataset.built = '1'; }
-  const filteredLista = filtered.filter(t => localTipoAtvState.lista.has(t.type || 'Outro'));
+
+  const listaFromEl = document.getElementById('lista-dateFrom');
+  const listaToEl = document.getElementById('lista-dateTo');
+  if (listaFromEl && !listaFromEl.value) { setListaCiclo(0, document.getElementById('lista-btn-atual')); return; }
+  const listaFrom = listaFromEl?.value ? new Date(listaFromEl.value + 'T00:00:00Z') : null;
+  const listaTo = listaToEl?.value ? new Date(listaToEl.value + 'T23:59:59Z') : null;
+
+  const listaOwnerSel = document.getElementById('lista-owner');
+  const listaOwners = [...new Set(tasks.map(t => getTaskOwner(t)).filter(Boolean))].sort();
+  const curListaOwner = listaOwnerSel.value;
+  listaOwnerSel.innerHTML = '<option value="all">Todos responsáveis</option>' + listaOwners.map(o => `<option value="${o}" ${o===curListaOwner?'selected':''}>${o}</option>`).join('');
+  const listaOwnerFiltro = listaOwnerSel.value;
+  const listaStatusFiltro = document.getElementById('lista-status').value;
+
+  const filteredLista = tasks.filter(t => {
+    const ref = new Date(t.dueDate || t.createdAt || 0);
+    if (listaFrom && ref < listaFrom) return false;
+    if (listaTo && ref > listaTo) return false;
+    if (listaOwnerFiltro !== 'all' && getTaskOwner(t) !== listaOwnerFiltro) return false;
+    if (listaStatusFiltro === 'done' && !isDone(t)) return false;
+    if (listaStatusFiltro === 'pending' && (isDone(t) || isOverdue(t))) return false;
+    if (listaStatusFiltro === 'overdue' && !isOverdue(t)) return false;
+    if (!localTipoAtvState.lista.has(t.type || 'Outro')) return false;
+    return true;
+  });
 
   document.getElementById('atv-count-label').textContent = filteredLista.length + ' atividade' + (filteredLista.length !== 1 ? 's' : '');
   const listEl = document.getElementById('atv-list');
@@ -3391,6 +3429,23 @@ function sairComissoes() {
 function clearComBtns() {
   document.getElementById('com-btn-atual')?.classList.remove('active');
   document.getElementById('com-btn-anterior')?.classList.remove('active');
+}
+
+function setListaCiclo(offset, btn) {
+  clearListaBtns();
+  if (btn) btn.classList.add('active');
+  const now = new Date();
+  const fimMes = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
+  const iniMes = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  const fmt_ = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  document.getElementById('lista-dateFrom').value = fmt_(iniMes);
+  document.getElementById('lista-dateTo').value = fmt_(fimMes);
+  renderAtividades();
+}
+
+function clearListaBtns() {
+  document.getElementById('lista-btn-atual')?.classList.remove('active');
+  document.getElementById('lista-btn-anterior')?.classList.remove('active');
 }
 
 function setAtvTipoCiclo(offset, btn) {
