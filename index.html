@@ -311,9 +311,7 @@
       <option value="done">Concluídas</option>
       <option value="pending">Pendentes</option>
     </select>
-    <select id="atv-tipo" onchange="renderAtividades()" style="font-size:12px;padding:5px 8px;border-radius:8px;border:0.5px solid rgba(255,255,255,0.15);background:#1a2540;color:white;font-family:'Poppins',sans-serif;">
-      <option value="all">Todos os tipos</option>
-    </select>
+    <span id="localTipoAtvSlot-global"></span>
     <input type="text" id="atv-search" placeholder="Buscar atividade..." oninput="renderAtividades()" style="padding:5px 10px;border-radius:8px;border:0.5px solid rgba(255,255,255,0.15);font-size:12px;font-family:'Poppins',sans-serif;background:rgba(255,255,255,0.08);color:white;width:160px;">
     <button onclick="fetchTasks(true)" id="atv-refresh-btn" style="background:rgba(255,255,255,0.07);color:white;border:0.5px solid rgba(255,255,255,0.15);font-size:12px;padding:6px 14px;border-radius:8px;display:inline-flex;align-items:center;gap:6px;">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
@@ -873,7 +871,7 @@
   <!-- Negócios em andamento sem atividades -->
   <div class="card" style="margin-top:1.5rem;">
     <div class="card-header" style="flex-wrap:wrap;gap:8px;">
-      <span class="card-title">⚠ Negócios em andamento sem atividades</span>
+      <span class="card-title">⚠ Negócios em andamento sem atividade nos últimos 30 dias</span>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <select id="atv-sem-owner" onchange="renderSemAtividades()" style="font-size:12px;padding:5px 8px;border-radius:8px;border:1px solid rgba(14,20,40,0.1);font-family:'Poppins',sans-serif;">
           <option value="all">Todos responsáveis</option>
@@ -1172,6 +1170,39 @@ function switchTab(id, btn) {
   if (id === 'analise') initFunilEtapas();
   if (id === 'atividades') { renderAtividades(); renderReunioesConsultor(); renderLeadsReunioesConversao(); renderVolumeReunioes(); renderReunioesCanal(); }
   if (id === 'contratos-autentique') fetchAutentique();
+}
+
+function atualizarFunisComDados() {
+  if (!baseDeals || !baseDeals.length) return;
+  const nomesExistentes = new Set(FUNIS_LISTA.map(f => f.nome));
+  const nomesReais = [...new Set(baseDeals.map(d => d.dealStage?.funnel?.name).filter(Boolean))];
+  const novos = nomesReais.filter(n => !nomesExistentes.has(n));
+  if (!novos.length) return;
+
+  const siglasUsadas = new Set(FUNIS_LISTA.map(f => f.sigla));
+  novos.forEach(nome => {
+    let sigla = nome.replace(/^Funil( de| do| da)?\s*/i, '').split(/\s+/).filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 3);
+    if (!sigla) sigla = nome.slice(0, 3).toUpperCase();
+    let base = sigla, i = 1;
+    while (siglasUsadas.has(sigla)) { sigla = base + i; i++; }
+    siglasUsadas.add(sigla);
+    FUNIS_LISTA.push({ nome, sigla });
+    // Novo funil entra selecionado por padrão em todos os multi-select já existentes
+    Object.values(localFunilState).forEach(set => set.add(nome));
+  });
+
+  // Reconstrói o menu global do topo já com os funis novos
+  const menu = document.getElementById('funnelMenu');
+  if (menu) {
+    const opts = FUNIS_LISTA.map(f =>
+      `<div class="funnel-option checked" data-funnel="${f.nome}" onclick="toggleFunnel(this)"><div class="funnel-check"></div><span style="flex:1;">${f.nome}</span><span class="funnel-sigla">${f.sigla}</span></div>`
+    ).join('');
+    const footer = `<div class="funnel-menu-footer"><button class="secondary" onclick="selectAllFunnels()">Todos</button><button class="secondary" onclick="clearAllFunnels()">Limpar</button></div>`;
+    menu.innerHTML = opts + footer;
+  }
+
+  // Os dropdowns locais (Atividades/Comissões) reconstroem no próximo render pra mostrar o funil novo
+  document.querySelectorAll('[id^="localFunilSlot-"]').forEach(slot => { slot.dataset.built = ''; });
 }
 
 function toggleFunnelMenu(e) { e.stopPropagation(); document.getElementById('funnelMenu').classList.toggle('open'); document.getElementById('funnelBtn').classList.toggle('open'); }
@@ -1927,7 +1958,7 @@ async function fetchTasks(forceRefresh) {
 // ===== Filtro de funil LOCAL (independente do filtro global do topo) =====
 // Usado nas tabelas "Reuniões por consultor" e "Leads x reuniões x conversão"
 const TIPOS_ATIVIDADE_LISTA = ['Reunião', 'WhatsApp', 'Email', 'Tarefa', 'Ligação', 'Proposta', 'Outro'];
-const localTipoAtvState = { lista: new Set(TIPOS_ATIVIDADE_LISTA) };
+const localTipoAtvState = { lista: new Set(TIPOS_ATIVIDADE_LISTA), global: new Set(TIPOS_ATIVIDADE_LISTA) };
 
 function localTipoAtvHTML(instanceId) {
   const opts = TIPOS_ATIVIDADE_LISTA.map(t =>
@@ -2335,7 +2366,7 @@ function renderLeadsReunioesResumo({ leadsCur, reunCur, foraJanelaCur, leadsPrev
 
   if (!temPrev) {
     el.innerHTML = card('Taxa de reuniões (' + (labelCur||'') + ')', reunCur.toLocaleString('pt-BR'), null, '', 'Sem trimestre anterior para comparar', false)
-      + card('Conv. em reuniões agendadas (' + (labelCur||'') + ')', leadsCur > 0 ? Math.round((reunCur/leadsCur)*100) + '%' : '—', null, '', 'Sem trimestre anterior para comparar', false);
+      + card('Conv. em reuniões realizadas (' + (labelCur||'') + ')', leadsCur > 0 ? Math.round((reunCur/leadsCur)*100) + '%' : '—', null, '', 'Sem trimestre anterior para comparar', false);
     return;
   }
 
@@ -2356,7 +2387,7 @@ function renderLeadsReunioesResumo({ leadsCur, reunCur, foraJanelaCur, leadsPrev
   const taxaPrev = leadsPrev > 0 ? (reunPrev / leadsPrev) * 100 : null;
   const deltaPP = (!dadosIncompletos && taxaCur !== null && taxaPrev !== null) ? Math.round(taxaCur - taxaPrev) : null;
   const card2 = card(
-    'Conv. em reuniões agendadas (' + labelCur + ')',
+    'Conv. em reuniões realizadas (' + labelCur + ')',
     taxaCur !== null ? Math.round(taxaCur) + '%' : '—',
     deltaPP, 'pp',
     dadosIncompletos ? 'Dados de tarefas cobrem só os últimos 30 dias — comparação pode estar incompleta' : ('vs. ' + (taxaPrev !== null ? Math.round(taxaPrev) : '—') + '% no trimestre anterior (' + labelPrev + ')'),
@@ -2864,12 +2895,9 @@ function renderAtividades() {
   const curOwner = ownerSel.value;
   ownerSel.innerHTML = '<option value="all">Todos responsáveis</option>' + owners.map(o => `<option value="${o}" ${o===curOwner?'selected':''}>${o}</option>`).join('');
 
-  // Popula select de tipos de atividade (Reunião, WhatsApp, Email, Tarefa, Ligação, Proposta...)
-  const tipos = [...new Set(tasks.map(t => t.type).filter(Boolean))].sort();
-  const tipoSel = document.getElementById('atv-tipo');
-  const curTipo = tipoSel.value;
-  tipoSel.innerHTML = '<option value="all">Todos os tipos</option>' + tipos.map(t => `<option value="${t}" ${t===curTipo?'selected':''}>${t}</option>`).join('');
-  const tipoFilter = tipoSel.value;
+  // Monta o dropdown multi-select de tipos (uma vez) e aplica no filtro
+  const slotTipoGlobal = document.getElementById('localTipoAtvSlot-global');
+  if (slotTipoGlobal && !slotTipoGlobal.dataset.built) { slotTipoGlobal.innerHTML = localTipoAtvHTML('global'); slotTipoGlobal.dataset.built = '1'; }
 
   // Filtra por período (usa dueDate ou createdAt)
   let filtered = tasks.filter(t => {
@@ -2885,7 +2913,7 @@ function renderAtividades() {
   if (ownerFilter !== 'all') filtered = filtered.filter(t => getTaskOwner(t) === ownerFilter);
   if (statusFilter === 'done') filtered = filtered.filter(t => isDone(t));
   if (statusFilter === 'pending') filtered = filtered.filter(t => !isDone(t));
-  if (tipoFilter !== 'all') filtered = filtered.filter(t => t.type === tipoFilter);
+  filtered = filtered.filter(t => localTipoAtvState.global.has(t.type || 'Outro'));
   if (search) filtered = filtered.filter(t => (t.text || '').toLowerCase().includes(search));
 
   const total = filtered.length;
@@ -3265,8 +3293,15 @@ function renderSemAtividades() {
   const ownerFilter = document.getElementById('atv-sem-owner')?.value || 'all';
   const funilFilter = document.getElementById('atv-sem-funil')?.value || 'all';
 
-  // IDs de deals que têm pelo menos 1 task
-  const dealIdsComTask = new Set(tasks.map(t => t.deal?.id).filter(Boolean));
+  // Considera "com atividade" só quem teve alguma nos últimos 30 dias — com o histórico
+  // completo do SharePoint, uma única atividade de meses atrás não deveria mais contar
+  // como "ativo", senão negócios parados de verdade ficam escondidos dessa lista.
+  const JANELA_RECENCIA_DIAS = 30;
+  const limiteRecencia = new Date(Date.now() - JANELA_RECENCIA_DIAS * 24 * 60 * 60 * 1000);
+  const dealIdsComTask = new Set(
+    tasks.filter(t => new Date(t.createdAt || t.dueDate || 0) >= limiteRecencia)
+         .map(t => t.deal?.id).filter(Boolean)
+  );
 
   // Negócios em andamento dos filtros globais ativos
   let candidatos = filteredDeals.filter(d => d.dealStatus?.id === 1);
@@ -4073,6 +4108,7 @@ async function fetchAll() {
     const newDeals=result.data||[];
     if(newDeals.length>0){
       baseDeals=newDeals;
+      atualizarFunisComDados();
       const horaAtual=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
       document.getElementById('lastUpdated').textContent='Atualizado às '+horaAtual;
       if(!refreshBlockedUntil||now>=refreshBlockedUntil) setMsg('success','✓ '+baseDeals.length.toLocaleString('pt-BR')+' negócios carregados');
